@@ -3,8 +3,8 @@ import cv2
 import csv
 import numpy as np
 
-CSV_FILE = r"data/final_balanced_clean_dataset.csv"
-VIDEO_BASE_DIR = r"data/download_videos"
+CSV_FILE = r"newobs\data\final_balanced_clean_dataset.csv"
+VIDEO_BASE_DIR = r"newobs\data\download_videos"
 FPS = 30
 T = 3  # Her segmentten alınacak kare sayısı
 
@@ -40,6 +40,9 @@ def extract_segment_from_range(video_path, start_sec, end_sec, T=T):
     return segments
 
 def build_dataset_from_csv_tracked():
+    # Çıkış klasörünü oluştur
+    os.makedirs("data/segments", exist_ok=True)
+    
     X, y = [], []
     segment_video_map = []  # Her segmentin hangi videoya ait olduğunu saklamak için
 
@@ -77,9 +80,9 @@ def build_dataset_from_csv_tracked():
     print("Dataset şekli:", X.shape, y.shape)
 
     # Segment-video eşleşmesini kaydet
-    np.save("X.npy", X)
-    np.save("y.npy", y)
-    np.save("segment_video_map.npy", segment_video_map)
+    np.save("data/segments/X.npy", X)
+    np.save("data/segments/y.npy", y)
+    np.save("data/segments/segment_video_map.npy", segment_video_map)
     print("X, y ve segment_video_map kaydedildi.")
 
 if __name__ == "__main__":

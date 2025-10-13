@@ -1,89 +1,101 @@
 import os
 import cv2
-import csv
+import pandas as pd
 import numpy as np
 
-CSV_FILE = r"newobs\data\final_balanced_clean_dataset.csv"
-VIDEO_BASE_DIR = r"newobs\data\download_videos"
+# --- Parametreler ---
+CSV_FILE = r"data/final_balanced_clean_dataset.csv"
+VIDEO_DIR = r"data/download_videos"
+OUTPUT_DIR = r"data/segments"
+
 FPS = 30
-T = 3  # Her segmentten alınacak kare sayısı
+T = 32  # Her segmentten alınacak kare sayısı
 
-def extract_segment_from_range(video_path, start_sec, end_sec, T=T):
+os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+# --- Veri Yükle ---
+df = pd.read_csv(CSV_FILE)
+
+# Category'yi one-hot için hazırlayalım
+categories = sorted(df["category"].unique())
+cat_to_index = {cat: i for i, cat in enumerate(categories)}
+print("Kategori listesi:", categories)
+
+X = []                # Segment kareleri
+y_binary = []         # Autism vs Healthy
+y_category = []       # One-hot davranış kategorisi
+segment_video_map = []  # Segment-video eşleşmesi
+
+# --- Segment Extraction ---
+for index, row in df.iterrows():
+    video_name = row['video_id']
+    label_text = row['label']       # autism / healthy
+    category_text = row['category'] # davranış türü
+
+    # Binary label
+    label_bin = 1 if label_text.lower() == "autism" else 0
+
+    # Category label (one-hot)
+    label_cat = np.zeros(len(categories), dtype=np.int32)
+    label_cat[cat_to_index[category_text]] = 1
+
+    start_time = float(row['start_time'])
+    end_time = float(row['end_time'])
+
+    video_path = os.path.join(VIDEO_DIR, label_text, f"{video_name}.mp4")
+    if not os.path.exists(video_path):
+        print(f"{video_path} bulunamadı, geçiliyor.")
+        continue
+
     cap = cv2.VideoCapture(video_path)
-    segments = []
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT)) 
 
-    start_frame = int(start_sec * FPS)
-    end_frame = int(end_sec * FPS)
-    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    start_frame = int(start_time * FPS)
+    end_frame = min(int(end_time * FPS), total_frames - 1)
 
-    if start_frame >= total_frames:
-        cap.release()
-        return segments
-
-    end_frame = min(end_frame, total_frames - 1)
+    # T kareyi eşit aralıklarla seç
     indices = np.linspace(start_frame, end_frame, num=T, dtype=int)
 
     frames = []
     for idx in indices:
-        cap.set(cv2.CAP_PROP_POS_FRAMES, int(idx))
+        cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
         ret, frame = cap.read()
         if not ret:
             continue
-        frame = cv2.resize(frame, (224, 224))
+        frame = cv2.resize(frame, (224, 224))  # Feature extraction uyumlu boyut
         frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         frames.append(frame)
 
-    if len(frames) == T:
-        segments.append(np.array(frames))
-
     cap.release()
-    return segments
 
-def build_dataset_from_csv_tracked():
-    # Çıkış klasörünü oluştur
-    os.makedirs("data/segments", exist_ok=True)
-    
-    X, y = [], []
-    segment_video_map = []  # Her segmentin hangi videoya ait olduğunu saklamak için
+    if len(frames) == T:
+        frames_array = np.array(frames)
+        X.append(frames_array)
+        y_binary.append(label_bin)
+        y_category.append(label_cat)
+        segment_video_map.append({
+            "video_id": video_name,
+            "csv_index": index,
+            "label": label_text,
+            "category": category_text
+        })
 
-    with open(CSV_FILE, "r", newline="", encoding="utf-8") as f:
-        reader = csv.DictReader(f)
-        for row_idx, row in enumerate(reader):
-            video_id = row["video_id"]
-            start_time = float(row["start_time"])
-            end_time = float(row["end_time"])
-            label_text = row["label"]
-            label = 1 if label_text.lower() == "autism" else 0
+        # Opsiyonel: segmentleri dosya olarak kaydet
+        category_dir = os.path.join(OUTPUT_DIR, label_text)
+        os.makedirs(category_dir, exist_ok=True)
+        out_path = os.path.join(category_dir, f"{video_name}_{start_time}_{end_time}.npy")
+        np.save(out_path, frames_array)
+        print(f"{video_name} segment kaydedildi: {start_time}-{end_time}s, shape: {frames_array.shape}")
 
-            if label_text.lower() == "autism":
-                video_path = os.path.join(VIDEO_BASE_DIR, "autism", f"{video_id}.mp4")
-            else:
-                video_path = os.path.join(VIDEO_BASE_DIR, "healthy", f"{video_id}.mp4")
+# --- Numpy array kaydet ---
+X = np.array(X)
+y_binary = np.array(y_binary)
+y_category = np.array(y_category)
 
-            if not os.path.exists(video_path):
-                print(f"Video bulunamadı: {video_path}")
-                continue
+np.save(os.path.join(OUTPUT_DIR, "X.npy"), X)
+np.save(os.path.join(OUTPUT_DIR, "y_binary.npy"), y_binary)
+np.save(os.path.join(OUTPUT_DIR, "y_category.npy"), y_category)
+np.save(os.path.join(OUTPUT_DIR, "segment_video_map.npy"), segment_video_map)
 
-            segments = extract_segment_from_range(video_path, start_time, end_time, T=T)
-            for seg in segments:
-                X.append(seg)
-                y.append(label)
-                segment_video_map.append({
-                    "video_id": video_id,
-                    "csv_index": row_idx
-                })
-
-            print(f"İşlendi: {video_id}, segment sayısı: {len(segments)}")
-
-    X = np.array(X)
-    y = np.array(y)
-    print("Dataset şekli:", X.shape, y.shape)
-
-    # Segment-video eşleşmesini kaydet
-    np.save("data/segments/X.npy", X)
-    np.save("data/segments/y.npy", y)
-    np.save("data/segments/segment_video_map.npy", segment_video_map)
-    print("X, y ve segment_video_map kaydedildi.")
-
-if __name__ == "__main__":
-    build_dataset_from_csv_tracked()
+print("✓ X, y_binary, y_category ve segment_video_map kaydedildi.")
+print("Dataset şekli:", X.shape, y_binary.shape, y_category.shape)

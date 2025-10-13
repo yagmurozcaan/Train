@@ -4,12 +4,14 @@ import pandas as pd
 import numpy as np
 
 # --- Parametreler ---
-CSV_FILE = r"data/final_balanced_clean_dataset.csv"
-VIDEO_DIR = r"data/download_videos"
+CSV_FILE = r"data\final_balanced_clean_dataset_synchronized.csv"
+VIDEO_DIR = r"data\download_videos"
 OUTPUT_DIR = r"data/segments"
 
-FPS = 30
-T = 32  # Her segmentten alınacak kare sayısı
+# FPS ve T değerleri - deneysel olarak optimize edilebilir
+DEFAULT_FPS = 30
+T_OPTIONS = [16, 32, 64]  # Farklı T değerleri deneyebilirsiniz
+SELECTED_T = 32  # Şu anki seçim
 
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
@@ -48,13 +50,21 @@ for index, row in df.iterrows():
         continue
 
     cap = cv2.VideoCapture(video_path)
-    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT)) 
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    
+    # Gerçek FPS'yi al (öneri: FPS kontrolü)
+    actual_fps = cap.get(cv2.CAP_PROP_FPS)
+    if actual_fps <= 0:
+        actual_fps = DEFAULT_FPS
+        print(f"⚠️ Video FPS alınamadı, varsayılan {DEFAULT_FPS} kullanılıyor: {video_name}")
+    else:
+        print(f"📹 Video FPS: {actual_fps:.2f} - {video_name}")
 
-    start_frame = int(start_time * FPS)
-    end_frame = min(int(end_time * FPS), total_frames - 1)
+    start_frame = int(start_time * actual_fps)
+    end_frame = min(int(end_time * actual_fps), total_frames - 1)
 
-    # T kareyi eşit aralıklarla seç
-    indices = np.linspace(start_frame, end_frame, num=T, dtype=int)
+    # T kareyi eşit aralıklarla seç (öneri: farklı stratejiler deneyebilirsiniz)
+    indices = np.linspace(start_frame, end_frame, num=SELECTED_T, dtype=int)
 
     frames = []
     for idx in indices:
@@ -68,7 +78,7 @@ for index, row in df.iterrows():
 
     cap.release()
 
-    if len(frames) == T:
+    if len(frames) == SELECTED_T:
         frames_array = np.array(frames)
         X.append(frames_array)
         y_binary.append(label_bin)
@@ -99,3 +109,25 @@ np.save(os.path.join(OUTPUT_DIR, "segment_video_map.npy"), segment_video_map)
 
 print("✓ X, y_binary, y_category ve segment_video_map kaydedildi.")
 print("Dataset şekli:", X.shape, y_binary.shape, y_category.shape)
+
+# --- Deneysel T değeri test fonksiyonu ---
+def test_different_T_values():
+    """
+    Farklı T değerlerini test etmek için kullanılabilir
+    """
+    print("\n" + "="*50)
+    print("T DEĞERİ OPTİMİZASYON ÖNERİSİ")
+    print("="*50)
+    print("Mevcut T değeri:", SELECTED_T)
+    print("Test edilebilecek T değerleri:", T_OPTIONS)
+    print("\nÖneriler:")
+    print("1. T=16: Daha hızlı eğitim, daha az bellek kullanımı")
+    print("2. T=32: Mevcut seçim (dengeli)")
+    print("3. T=64: Daha detaylı temporal bilgi, daha yavaş eğitim")
+    print("\nFarklı T değerlerini test etmek için:")
+    print("- SELECTED_T değerini değiştirin")
+    print("- Bu scripti yeniden çalıştırın")
+    print("- Model performansını karşılaştırın")
+
+if __name__ == "__main__":
+    test_different_T_values()

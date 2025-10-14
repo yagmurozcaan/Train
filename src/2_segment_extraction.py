@@ -2,44 +2,54 @@ import os
 import cv2
 import pandas as pd
 import numpy as np
+import mediapipe as mp
+from tqdm import tqdm
 
 # --- Parametreler ---
-CSV_FILE = r"data\final_balanced_clean_dataset_synchronized.csv"
-VIDEO_DIR = r"data\download_videos"
+CSV_FILE = r"data/final_balanced_clean_dataset.csv"
+VIDEO_DIR = r"data/download_videos"
 OUTPUT_DIR = r"data/segments"
 
-# FPS ve T değerleri - deneysel olarak optimize edilebilir
-DEFAULT_FPS = 30
-T_OPTIONS = [16, 32, 64]  # Farklı T değerleri deneyebilirsiniz
-SELECTED_T = 32  # Şu anki seçim
+FPS = 30
+T = 32  # Her segmentten alınacak kare sayısı
 
 os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+# --- MediaPipe Holistic ---
+mp_holistic = mp.solutions.holistic
+holistic_model = mp_holistic.Holistic(static_image_mode=False,
+                                      min_detection_confidence=0.5,
+                                      min_tracking_confidence=0.5)
 
 # --- Veri Yükle ---
 df = pd.read_csv(CSV_FILE)
 
-# Category'yi one-hot için hazırlayalım
-categories = sorted(df["category"].unique())
+# 🔹 normal_behavior hariç kategoriler
+categories = sorted([c for c in df['category'].unique() if c.lower() != 'normal_behavior'])
 cat_to_index = {cat: i for i, cat in enumerate(categories)}
-print("Kategori listesi:", categories)
+print("Kategori listesi (normal_behavior hariç):", categories)
 
-X = []                # Segment kareleri
-y_binary = []         # Autism vs Healthy
-y_category = []       # One-hot davranış kategorisi
-segment_video_map = []  # Segment-video eşleşmesi
+X = []                
+y_binary = []
+y_category = []
+segment_video_map = []
+landmark_dir = os.path.join(OUTPUT_DIR, "landmarks")
+os.makedirs(landmark_dir, exist_ok=True)
 
-# --- Segment Extraction ---
-for index, row in df.iterrows():
+# --- Segment Extraction + Landmark normalize ---
+for index, row in tqdm(df.iterrows(), total=len(df), desc="Segmentler işleniyor"):
     video_name = row['video_id']
-    label_text = row['label']       # autism / healthy
-    category_text = row['category'] # davranış türü
+    label_text = row['label']
+    category_text = row['category']
 
-    # Binary label
+    # 1 = autism, 0 = healthy
     label_bin = 1 if label_text.lower() == "autism" else 0
 
-    # Category label (one-hot)
+    # 🔹 sadece autism ve normal_behavior olmayanlar için one-hot
     label_cat = np.zeros(len(categories), dtype=np.int32)
-    label_cat[cat_to_index[category_text]] = 1
+    if label_bin == 1 and category_text.lower() != "normal_behavior":
+        if category_text in cat_to_index:
+            label_cat[cat_to_index[category_text]] = 1
 
     start_time = float(row['start_time'])
     end_time = float(row['end_time'])
@@ -51,34 +61,55 @@ for index, row in df.iterrows():
 
     cap = cv2.VideoCapture(video_path)
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    
-    # Gerçek FPS'yi al (öneri: FPS kontrolü)
-    actual_fps = cap.get(cv2.CAP_PROP_FPS)
-    if actual_fps <= 0:
-        actual_fps = DEFAULT_FPS
-        print(f"⚠️ Video FPS alınamadı, varsayılan {DEFAULT_FPS} kullanılıyor: {video_name}")
-    else:
-        print(f"📹 Video FPS: {actual_fps:.2f} - {video_name}")
 
-    start_frame = int(start_time * actual_fps)
-    end_frame = min(int(end_time * actual_fps), total_frames - 1)
-
-    # T kareyi eşit aralıklarla seç (öneri: farklı stratejiler deneyebilirsiniz)
-    indices = np.linspace(start_frame, end_frame, num=SELECTED_T, dtype=int)
+    start_frame = int(start_time * FPS)
+    end_frame = min(int(end_time * FPS), total_frames - 1)
+    indices = np.linspace(start_frame, end_frame, num=T, dtype=int)
 
     frames = []
+    landmarks_segment = []
+
     for idx in indices:
         cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
         ret, frame = cap.read()
         if not ret:
             continue
-        frame = cv2.resize(frame, (224, 224))  # Feature extraction uyumlu boyut
-        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        frames.append(frame)
+        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        frame_resized = cv2.resize(frame_rgb, (224, 224))
+        frames.append(frame_resized)
+
+        # MediaPipe Holistic
+        results = holistic_model.process(frame_rgb)
+        landmarks_frame = {}
+
+        # Face
+        if results.face_landmarks:
+            face = np.array([[lm.x, lm.y] for lm in results.face_landmarks.landmark])
+            landmarks_frame["face"] = face
+
+        # Hands
+        hands = []
+        if results.left_hand_landmarks:
+            hands.append(np.array([[lm.x, lm.y] for lm in results.left_hand_landmarks.landmark]))
+        if results.right_hand_landmarks:
+            hands.append(np.array([[lm.x, lm.y] for lm in results.right_hand_landmarks.landmark]))
+        landmarks_frame["hands"] = hands
+
+        # Pose
+        if results.pose_landmarks:
+            pose = np.array([[lm.x, lm.y] for lm in results.pose_landmarks.landmark])
+            # Normalize: center ve scale
+            center = pose[0]  # pelvis
+            pose_centered = pose - center
+            scale = np.linalg.norm(pose[11] - pose[12])  # omuz mesafesi
+            pose_normalized = pose_centered / (scale + 1e-6)
+            landmarks_frame["pose"] = pose_normalized
+
+        landmarks_segment.append(landmarks_frame)
 
     cap.release()
 
-    if len(frames) == SELECTED_T:
+    if len(frames) == T:
         frames_array = np.array(frames)
         X.append(frames_array)
         y_binary.append(label_bin)
@@ -90,44 +121,25 @@ for index, row in df.iterrows():
             "category": category_text
         })
 
-        # Opsiyonel: segmentleri dosya olarak kaydet
+        # Landmark kaydet
+        landmark_path = os.path.join(landmark_dir, f"{video_name}_{start_time}_{end_time}_landmarks.npy")
+        np.save(landmark_path, landmarks_segment)
+
+        # Segment RGB kaydet
         category_dir = os.path.join(OUTPUT_DIR, label_text)
         os.makedirs(category_dir, exist_ok=True)
-        out_path = os.path.join(category_dir, f"{video_name}_{start_time}_{end_time}.npy")
-        np.save(out_path, frames_array)
+        segment_path = os.path.join(category_dir, f"{video_name}_{start_time}_{end_time}.npy")
+        np.save(segment_path, frames_array)
+
         print(f"{video_name} segment kaydedildi: {start_time}-{end_time}s, shape: {frames_array.shape}")
 
 # --- Numpy array kaydet ---
 X = np.array(X)
 y_binary = np.array(y_binary)
 y_category = np.array(y_category)
-
 np.save(os.path.join(OUTPUT_DIR, "X.npy"), X)
 np.save(os.path.join(OUTPUT_DIR, "y_binary.npy"), y_binary)
 np.save(os.path.join(OUTPUT_DIR, "y_category.npy"), y_category)
 np.save(os.path.join(OUTPUT_DIR, "segment_video_map.npy"), segment_video_map)
 
-print("✓ X, y_binary, y_category ve segment_video_map kaydedildi.")
-print("Dataset şekli:", X.shape, y_binary.shape, y_category.shape)
-
-# --- Deneysel T değeri test fonksiyonu ---
-def test_different_T_values():
-    """
-    Farklı T değerlerini test etmek için kullanılabilir
-    """
-    print("\n" + "="*50)
-    print("T DEĞERİ OPTİMİZASYON ÖNERİSİ")
-    print("="*50)
-    print("Mevcut T değeri:", SELECTED_T)
-    print("Test edilebilecek T değerleri:", T_OPTIONS)
-    print("\nÖneriler:")
-    print("1. T=16: Daha hızlı eğitim, daha az bellek kullanımı")
-    print("2. T=32: Mevcut seçim (dengeli)")
-    print("3. T=64: Daha detaylı temporal bilgi, daha yavaş eğitim")
-    print("\nFarklı T değerlerini test etmek için:")
-    print("- SELECTED_T değerini değiştirin")
-    print("- Bu scripti yeniden çalıştırın")
-    print("- Model performansını karşılaştırın")
-
-if __name__ == "__main__":
-    test_different_T_values()
+print("✓ Segment extraction ve normalize landmark kaydı tamamlandı.")

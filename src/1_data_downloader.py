@@ -1,3 +1,9 @@
+"""
+Video Data Downloader for NEUROLOOK Project
+Downloads YouTube and Instagram videos from CSV dataset for autism detection training.
+Handles both YouTube Shorts and Instagram Reels with automatic format conversion.
+"""
+
 import os
 import csv
 import sys
@@ -5,7 +11,6 @@ import subprocess
 from yt_dlp import YoutubeDL
 
 def install_yt_dlp():
-    """yt-dlp kontrolü"""
     try:
         import yt_dlp
         return True
@@ -19,7 +24,6 @@ def install_yt_dlp():
 
 def download_videos(csv_file="data/final_balanced_clean_dataset.csv",
                     output_dir="data/download_videos"):
-    """Hem Instagram hem YouTube videolarını indirir"""
     if not install_yt_dlp():
         return
 
@@ -39,10 +43,8 @@ def download_videos(csv_file="data/final_balanced_clean_dataset.csv",
                 print(f"⚠️ Eksik veri atlandı: {row}")
                 continue
 
-            # --- Instagram kontrolü ---
             if "instagram.com" in video_url.lower():
                 platform = "instagram"
-            # --- YouTube kontrolü ---
             elif "youtube.com/shorts/" in video_url:
                 vid = video_url.split("shorts/")[-1].split("?")[0]
                 video_url = f"https://www.youtube.com/watch?v={vid}"
@@ -53,13 +55,11 @@ def download_videos(csv_file="data/final_balanced_clean_dataset.csv",
                 print(f"⚠️ Desteklenmeyen link atlandı: {video_url}")
                 continue
 
-            # Label klasörü
             label_dir = os.path.join(output_dir, label)
             os.makedirs(label_dir, exist_ok=True)
 
             output_file = os.path.join(label_dir, f"{video_id}.%(ext)s")
 
-            # Daha önce indirilmiş mi?
             if any(os.path.exists(os.path.join(label_dir, f"{video_id}.{ext}")) for ext in ["mp4", "webm", "mkv"]):
                 print(f"✅ Zaten var, atlanıyor: {video_id}")
                 continue
@@ -90,7 +90,6 @@ def download_videos(csv_file="data/final_balanced_clean_dataset.csv",
                     "error": str(e)
                 })
 
-    # Başarısız videoları kaydet
     if failed_videos:
         fail_file = os.path.join(output_dir, "failed_videos.csv")
         with open(fail_file, "w", newline="", encoding="utf-8") as f:

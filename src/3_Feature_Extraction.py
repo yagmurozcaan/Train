@@ -1,3 +1,9 @@
+"""
+Feature Extraction Module for NEUROLOOK Project
+Extracts visual features using EfficientNetB0 and combines with category features.
+Creates train/validation/test splits for LSTM model training with video-based splitting.
+"""
+
 import os
 import numpy as np
 import pandas as pd
@@ -6,20 +12,16 @@ from tensorflow.keras.applications.efficientnet import preprocess_input
 from tensorflow.keras.preprocessing import image
 from sklearn.model_selection import train_test_split
 
-# --- EfficientNetB0 yükle (ImageNet) ---
 base_model = EfficientNetB0(weights='imagenet', include_top=False, pooling='avg')
 
-# Tüm katmanları dondur
 for layer in base_model.layers:
     layer.trainable = False
 
-# Son 20 katmanı fine-tune
 for layer in base_model.layers[-10:]:
     layer.trainable = True
 
 print("✓ EfficientNetB0 katmanları fine-tune için ayarlandı")
 
-# --- Feature extraction ---
 def extract_features(frames):
     features = []
     for frame in frames:
@@ -28,13 +30,11 @@ def extract_features(frames):
         img = preprocess_input(img)
         feat = base_model.predict(img, verbose=0)
         features.append(feat.flatten())
-    return np.array(features)  # (T, d)
+    return np.array(features)
 
-# --- CSV'deki category feature'ını ekleme ---
 def add_category_features(X_features, segment_video_map, csv_path):
     df = pd.read_csv(csv_path)
 
-    # 🔹 normal_behavior hariç kategoriler
     categories = sorted([c for c in df['category'].unique() if c.lower() != 'normal_behavior'])
     cat_to_index = {cat: i for i, cat in enumerate(categories)}
     
@@ -51,15 +51,14 @@ def add_category_features(X_features, segment_video_map, csv_path):
 
         extra_features_list.append(cat_feat)
     
-    extra_features_array = np.array(extra_features_list)  # (N, n_categories)
+    extra_features_array = np.array(extra_features_list)
     N, T, d = X_features.shape
-    extra_features_time = np.repeat(extra_features_array[:, np.newaxis, :], T, axis=1)  # (N, T, n_categories)
+    extra_features_time = np.repeat(extra_features_array[:, np.newaxis, :], T, axis=1)
 
     X_augmented = np.concatenate([X_features, extra_features_time], axis=2)
     print("Feature dataset kategorileri (normal_behavior hariç):", categories)
     return X_augmented
 
-# --- Feature dataset oluşturma ---
 def build_feature_dataset(
     X_path="data/segments/X.npy",
     y_binary_path="data/segments/y_binary.npy",
@@ -76,20 +75,17 @@ def build_feature_dataset(
     N, T, H, W, C = X.shape
     feature_list = []
 
-    # Feature çıkar
     for i in range(N):
         feats = extract_features(X[i])
         feature_list.append(feats)
         if i % 100 == 0:
             print(f"{i}/{N} segment işlendi...")
 
-    X_features = np.array(feature_list)  # (N, T, d)
+    X_features = np.array(feature_list)
 
-    # CSV category feature ekle
     X_features = add_category_features(X_features, segment_video_map, csv_path)
     print("Feature dataset şekli (EffNet + category feature):", X_features.shape)
 
-    # Video bazlı split
     video_ids = [seg['video_id'] for seg in segment_video_map]
     unique_videos = list(set(video_ids))
     video_labels = {vid: y_binary[i] for i, vid in enumerate(video_ids)}

@@ -1,3 +1,9 @@
+"""
+LSTM Model Training Module for NEUROLOOK Project
+Trains a Bidirectional LSTM model for autism detection using extracted features.
+Includes model evaluation, threshold optimization, and result visualization with comprehensive metrics.
+"""
+
 import os
 import numpy as np
 import matplotlib.pyplot as plt
@@ -29,7 +35,6 @@ class AutismDetectionTrainer:
             self.X_test = np.load(os.path.join(self.features_dir, "X_test.npy"))
             self.y_test = np.load(os.path.join(self.features_dir, "y_test_binary.npy"))
             
-            # Video splitting bilgileri
             self.train_videos = np.load(os.path.join(self.features_dir, "train_videos.npy"), allow_pickle=True)
             self.val_videos = np.load(os.path.join(self.features_dir, "val_videos.npy"), allow_pickle=True)
             self.test_videos = np.load(os.path.join(self.features_dir, "test_videos.npy"), allow_pickle=True)
@@ -38,7 +43,6 @@ class AutismDetectionTrainer:
             print(f"Validation: {self.X_val.shape}, {self.y_val.shape}")
             print(f"Test: {self.X_test.shape}, {self.y_test.shape}")
             
-            # NaN kontrolü
             for dataset_name, dataset in [("X_train", self.X_train), ("X_val", self.X_val), ("X_test", self.X_test)]:
                 if np.isnan(dataset).any():
                     print(f"NaN tespit edildi ({dataset_name}), temizleniyor...")
@@ -55,20 +59,16 @@ class AutismDetectionTrainer:
             return False
 
     def create_model(self, input_shape):
-        """
-        T zaman serisi için Bidirectional LSTM modeli
-        """
         model = Sequential()
         model.add(Input(shape=input_shape))
         model.add(Masking(mask_value=0.))
         
-        # LSTM katmanları
         model.add(Bidirectional(LSTM(128, return_sequences=True, dropout=0.3, recurrent_dropout=0.2)))
         model.add(Bidirectional(LSTM(64, dropout=0.3, recurrent_dropout=0.2)))
         
         model.add(Dense(32, activation='relu'))
         model.add(Dropout(0.3))
-        model.add(Dense(1, activation='sigmoid'))  # Binary classification
+        model.add(Dense(1, activation='sigmoid'))
 
         model.compile(
             optimizer=Adam(learning_rate=1e-5),
@@ -81,7 +81,7 @@ class AutismDetectionTrainer:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         return [
             EarlyStopping(
-                monitor='val_loss',  # Binary loss ana hedef
+                monitor='val_loss',
                 mode='min',
                 patience=15,
                 restore_best_weights=True,
@@ -108,7 +108,7 @@ class AutismDetectionTrainer:
         if not self.load_data():
             return False
 
-        input_shape = (self.X_train.shape[1], self.X_train.shape[2])  # T, d+n_categories
+        input_shape = (self.X_train.shape[1], self.X_train.shape[2])
         self.model = self.create_model(input_shape)
         self.model.summary()
 
@@ -145,7 +145,6 @@ class AutismDetectionTrainer:
         disp.plot(cmap='Blues', values_format='d')
         plt.show()
 
-        # Model sonuçlarını yazdır
         print("\n--- Son Epoch Sonuçları ---")
         print(f"Train Loss: {self.history.history['loss'][-1]:.4f}")
         print(f"Train Accuracy: {self.history.history['accuracy'][-1]:.4f}")

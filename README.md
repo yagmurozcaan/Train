@@ -109,27 +109,39 @@ Bu aşama, her segment için **görsel özellikleri** çıkarır ve **landmark v
 🔍 *Amaç:* Görsel (EfficientNet) + Davranışsal (MediaPipe) verileri tek vektörde birleştirmek.
 
 ---
-
-### 🟥 4️⃣ Model Eğitimi (`4_Train.py`)
+# 4️⃣ Model Eğitimi (AutismDetectionTrainer)
 
 Son aşamada zaman serisi özellikleriyle çalışan **Bidirectional LSTM modeli** eğitilir.
 
-- **Model Mimarisi:**
-  - `Masking` (0’larla doldurulmuş frame’leri yoksayar)
-  - `Bidirectional LSTM (128 birim)` × 2
-  - `Dropout` (overfitting önleme)
-  - `Dense(64)` + `Dense(1, sigmoid)` çıkış katmanı
-- **Kayıp Fonksiyonu:** `binary_crossentropy`
-- **Optimizasyon:** `Adam`
-- **Metrikler:** `accuracy`, `precision`, `recall`, `F1-score`
-- **Threshold Arama:**
-  - Eğitilen model için 0.1–0.9 arası değerlerde F1-skoru hesaplanır.
-  - En iyi threshold değeri (ör. 0.46, 0.70, 0.85) otomatik belirlenir.
-- **Model Kaydı:**
-  - En iyi epoch çıktısı `models/best_model_YYYYMMDD_HHMMSS.keras` olarak kaydedilir.
-  - Eğitim geçmişi `history.png` grafiği olarak saklanır.
+## Model Mimarisi
+- **Masking:** 0’larla doldurulmuş frame’leri yoksayar  
+- **Bidirectional LSTM:** 64 birim → 32 birim, 2 katman  
+- **BatchNormalization:** LSTM katmanlarından sonra  
+- **Dense Katmanları:** Dense(32) + Dropout + Dense(1, sigmoid)  
+- **Kayıp Fonksiyonu:** `binary_crossentropy`  
+- **Optimizasyon:** Adam (lr=1e-4)  
+- **Metrikler:** accuracy, precision, recall, AUC  
 
-📈 *Amaç:* Segment tabanlı analizleri birleştirip, genel otizm tespit olasılığını tahmin etmek.
+## Veri İşleme
+- NaN değerler otomatik temizlenir  
+- Train set’e hafif Gauss gürültüsü eklenir (data augmentation)  
+
+## Callback’ler
+- EarlyStopping (`val_loss` izlenir, `patience=8`)  
+- ReduceLROnPlateau (`val_loss` izlenir, `patience=4`, `factor=0.5`)  
+- ModelCheckpoint (`val_accuracy` en yüksek epoch kaydedilir)  
+
+## Threshold Arama
+- Test set’inde 0.1–0.9 arası F1-score hesaplanır  
+- En iyi threshold otomatik belirlenir  
+
+## Model Kaydı
+- En iyi epoch çıktısı `autism_detection_model_YYYYMMDD_HHMMSS.keras` olarak kaydedilir  
+- Eğitim geçmişi `training_history_YYYYMMDD_HHMMSS.npy` olarak saklanır  
+- Model bilgileri `model_info_YYYYMMDD_HHMMSS.pkl` dosyasına yazılır  
+
+## Amaç
+Segment tabanlı analizleri birleştirip, genel otizm tespit olasılığını tahmin etmek.
 
 ---
 
